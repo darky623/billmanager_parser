@@ -1,0 +1,8 @@
+services:
+  billmanager-parser:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./snapshots:/app/snapshots
