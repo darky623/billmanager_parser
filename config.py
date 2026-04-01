@@ -1,4 +1,4 @@
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     # Providers: comma-separated list of base URLs
     # Credentials per provider: PROVIDER__<INDEX>__BASE_URL, __USERNAME, __PASSWORD
     providers: list[ProviderCredentials] = Field(default_factory=list)
+
+    @field_validator("providers", mode="before")
+    @classmethod
+    def _parse_providers(cls, v: object) -> object:
+        if isinstance(v, dict):
+            return [v[k] for k in sorted(v.keys(), key=int)]
+        return v
 
     # Scheduler
     parse_cron: str = "0 2 * * *"  # daily at 02:00
