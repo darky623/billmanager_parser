@@ -26,7 +26,7 @@ def map_prices(prices: list[ParsedPrice]) -> list[dict]:
         result.append({
             "period": price.period,
             "provider_price": str(price.cost),
-            "currency": price.currency.upper(),
+            "currency": price.currency.lower(),
         })
 
     return result
