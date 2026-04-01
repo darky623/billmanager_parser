@@ -58,7 +58,7 @@ class CloudsellClient:
             "active_external_ids": active_external_ids,
             "plans": plans,
         }
-        response = await self._post("/v1/pricing-plans/sync", payload)
+        response = await self._post("/api/v1/pricing-plans/sync", payload)
         if response.status_code != 200:
             raise CloudsellApiError(response.status_code, response.text)
         result = response.json()
