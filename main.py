@@ -34,7 +34,7 @@ async def main() -> None:
         providers=len(settings.providers),
         schedule=settings.parse_cron,
         api_url=settings.cloudsell_api_url,
-        llm_model=settings.anthropic_model,
+        llm_model=settings.gemini_model,
     )
 
     scheduler = AsyncIOScheduler()

@@ -5,9 +5,8 @@ Per provider:
 2. Parse → list[ParsedPlan]
 3. For each plan: compare snapshot, skip if unchanged
 4. For changed/new plans: fetch OS list, map features (fast → LLM fallback), map prices
-5. Ensure OS families and OS records exist in cloudsell API
-6. POST /v1/pricing-plans/sync with the full active_external_ids + changed plans payload
-7. Save snapshots for all processed plans
+5. POST /v1/pricing-plans/sync — includes OS definitions, API handles upsert internally
+6. Save snapshots for successfully synced plans
 """
 
 import structlog
@@ -19,7 +18,7 @@ from mapper.features import get_location_fields, map_features
 from mapper.llm import build_gemini_client
 from mapper.prices import map_prices
 from parser.client import BillManagerClient
-from parser.models import ParsedOS, ParsedPlan
+from parser.models import ParsedPlan
 from parser.os_list import parse_os_list
 from parser.plans import parse_pricelist
 from snapshot.store import SnapshotStore, plan_to_snapshot_dict
@@ -47,19 +46,13 @@ class ParserOrchestrator:
             service_key=settings.cloudsell_service_key.get_secret_value(),
             timeout=settings.api_timeout,
         ) as api:
-            # Find provider record in cloudsell DB
-            provider_id = await self._resolve_provider_id(api, creds.base_url)
-            if not provider_id:
-                log.error("Provider not found in cloudsell DB, skipping", base_url=creds.base_url)
-                return
-
             async with BillManagerClient(
                 base_url=creds.base_url,
                 username=creds.username,
                 password=creds.password.get_secret_value(),
                 timeout=settings.provider_timeout,
             ) as bm:
-                await self._process_provider(bm, api, provider_id, creds)
+                await self._process_provider(bm, api, creds.provider_id, creds)
 
         structlog.contextvars.unbind_contextvars("provider")
 
@@ -110,13 +103,15 @@ class ParserOrchestrator:
 
         # 4. Build plan payloads for changed plans
         plan_payloads: list[dict] = []
+        successfully_built: list[ParsedPlan] = []
 
         for plan in changed_plans:
             log.info("Processing changed plan", plan_id=plan.external_id, name=plan.name)
 
-            payload = await self._build_plan_payload(bm, api, provider_id, creds.base_url, plan)
+            payload = await self._build_plan_payload(bm, api, provider_id, creds.base_url, plan, creds.factor, creds.name_prefix)
             if payload:
                 plan_payloads.append(payload)
+                successfully_built.append(plan)
 
         if not plan_payloads:
             log.warning("No valid plan payloads built despite changes")
@@ -138,8 +133,8 @@ class ParserOrchestrator:
             log.error("Failed to sync plans with API", error=str(exc))
             return
 
-        # 6. Save snapshots for changed plans (only after successful sync)
-        for plan in changed_plans:
+        # 6. Save snapshots only for plans that were successfully built and synced
+        for plan in successfully_built:
             snap_dict = plan_to_snapshot_dict(
                 plan_id=plan.external_id,
                 prices=[{"period": p.period, "cost": str(p.cost), "currency": p.currency} for p in plan.prices],
@@ -147,7 +142,7 @@ class ParserOrchestrator:
             )
             self._snapshot.save(creds.base_url, plan.external_id, snap_dict)
 
-        log.info("Snapshots updated", count=len(changed_plans))
+        log.info("Snapshots updated", count=len(successfully_built))
 
     async def _build_plan_payload(
         self,
@@ -156,9 +151,25 @@ class ParserOrchestrator:
         provider_id: str,
         provider_host: str,
         plan: ParsedPlan,
+        factor: float,
+        name_prefix: str,
     ) -> dict | None:
-        plan_ctx = structlog.contextvars.bind_contextvars(plan_id=plan.external_id)
+        structlog.contextvars.bind_contextvars(plan_id=plan.external_id)
+        try:
+            return await self._build_plan_payload_inner(bm, api, provider_id, provider_host, plan, factor, name_prefix)
+        finally:
+            structlog.contextvars.unbind_contextvars("plan_id")
 
+    async def _build_plan_payload_inner(
+        self,
+        bm: BillManagerClient,
+        api: CloudsellClient,
+        provider_id: str,
+        provider_host: str,
+        plan: ParsedPlan,
+        factor: float,
+        name_prefix: str,
+    ) -> dict | None:
         # 4a. Fetch OS list
         try:
             raw_os = await bm.fetch_os_list(
@@ -175,11 +186,16 @@ class ParserOrchestrator:
             log.warning("No OS entries for plan, skipping")
             return None
 
-        # 4b. Ensure OS families and collect os UUIDs
-        os_uuids = await self._ensure_os_records(api, provider_id, os_list, plan.external_id)
-        if not os_uuids:
-            log.warning("No valid OS UUIDs, skipping plan")
-            return None
+        # 4b. Build OS definitions (API handles upsert internally)
+        os_definitions = [
+            {
+                "family": os_entry.family,
+                "name": os_entry.display_name,
+                "external_id": os_entry.external_id,
+                "version": os_entry.version,
+            }
+            for os_entry in os_list
+        ]
 
         # 4c. Map prices
         prices = map_prices(plan.prices)
@@ -195,16 +211,18 @@ class ParserOrchestrator:
 
         location_code, location_raw = get_location_fields(plan)
 
+        plan_name = f"{name_prefix}-{plan.external_id}"
         payload = {
-            "name": plan.name,
+            "name": plan_name,
             "provider_id": provider_id,
-            "description": plan.name,
+            "description": plan_name,
             "server_type": "virtual",
             "external_id": plan.external_id,
             "is_active": True,
+            "factor": str(factor),
             "prices": prices,
             "features": {
-                "processor_name": features.processor_name,
+                "processor_name": (features.processor_name or "")[:50],
                 "cores": features.cores,
                 "core_frequency": str(features.core_frequency) if features.core_frequency else None,
                 "ram": str(features.ram),
@@ -214,10 +232,10 @@ class ParserOrchestrator:
                 "network_speed": str(features.network_speed),
                 "network_limit": str(features.network_limit),
                 "location": location_code,
-                "location_raw": location_raw,
+                "location_raw": location_raw[:40] if location_raw else None,
                 "datacenter_id": plan.datacenter_id,
             },
-            "os_list": [str(uid) for uid in os_uuids],
+            "os_definitions": os_definitions,
         }
 
         log.info(
@@ -227,61 +245,8 @@ class ParserOrchestrator:
             ram=str(features.ram),
             disk=str(features.disk),
             prices_count=len(prices),
-            os_count=len(os_uuids),
+            os_count=len(os_definitions),
         )
 
-        structlog.contextvars.unbind_contextvars("plan_id")
         return payload
 
-    async def _ensure_os_records(
-        self,
-        api: CloudsellClient,
-        provider_id: str,
-        os_list: list[ParsedOS],
-        plan_id: int,
-    ) -> list:
-        os_uuids = []
-        families_ensured: set[str] = set()
-
-        for os_entry in os_list:
-            # Ensure family exists
-            if os_entry.family not in families_ensured:
-                try:
-                    await api.ensure_os_family(os_entry.family)
-                    families_ensured.add(os_entry.family)
-                except CloudsellApiError as exc:
-                    log.warning("Failed to ensure OS family", family=os_entry.family, error=str(exc))
-
-            # Ensure OS record exists
-            try:
-                os_uuid = await api.ensure_os(
-                    provider_id=provider_id,
-                    family=os_entry.family,
-                    name=os_entry.display_name,
-                    external_id=os_entry.external_id,
-                )
-                if os_uuid:
-                    os_uuids.append(os_uuid)
-            except CloudsellApiError as exc:
-                log.warning(
-                    "Failed to ensure OS record",
-                    os_name=os_entry.display_name,
-                    plan_id=plan_id,
-                    error=str(exc),
-                )
-
-        return os_uuids
-
-    async def _resolve_provider_id(self, api: CloudsellClient, base_url: str) -> str | None:
-        """Find provider UUID in cloudsell by matching base_url."""
-        try:
-            providers = await api.get_providers()
-        except CloudsellApiError as exc:
-            log.error("Failed to fetch providers from API", error=str(exc))
-            return None
-
-        for p in providers:
-            if p.get("base_url", "").rstrip("/") == base_url.rstrip("/"):
-                return p["id"]
-
-        return None

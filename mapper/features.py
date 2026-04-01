@@ -26,7 +26,7 @@ _DETAIL_NETWORK = "Входящий трафик"
 _MB_IN_GB = Decimal("1024")
 _GB_IN_TB = Decimal("1024")
 
-_DISK_TYPE_KEYWORDS = {"nvme": "NVMe", "ssd": "SSD", "hdd": "HDD"}
+_DISK_TYPE_KEYWORDS = {"nvme": "NVME", "ssd": "SSD", "hdd": "HDD"}
 _RAM_TYPE_KEYWORDS = {"ddr5": "DDR5", "ddr4": "DDR4", "ddr3": "DDR3"}
 
 

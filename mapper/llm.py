@@ -56,7 +56,7 @@ Output JSON schema (all values must match these types):
   "ram": number in GB (convert: 1 GB = 1024 MB),
   "ram_type": "DDR4" or "DDR3" or "DDR5" (default "DDR4" if unknown),
   "disk": number in GB (convert: 1 GB = 1024 MB, 1 TB = 1024 GB),
-  "disk_type": "SSD" or "NVMe" or "HDD" (default "SSD" if unknown),
+  "disk_type": "SSD" or "NVME" or "HDD" (default "SSD" if unknown),
   "network_speed": number in Mbps (e.g. 200Mb/s → 200),
   "network_limit": number in TB (e.g. unlimited or not mentioned → 0)
 }

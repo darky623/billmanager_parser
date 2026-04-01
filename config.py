@@ -5,9 +5,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class ProviderCredentials(BaseSettings):
     model_config = SettingsConfigDict(extra="allow")
 
+    provider_id: str  # UUID провайдера из cloudsell БД
     base_url: str
     username: str
     password: SecretStr
+    factor: float = 1.3  # price multiplier: final_price = provider_price * factor
+    name_prefix: str  # 2-letter prefix for plan names, e.g. "YC" for YaColo, "DC" for Datacheap
 
 
 class Settings(BaseSettings):
