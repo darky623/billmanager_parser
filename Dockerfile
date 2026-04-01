@@ -6,12 +6,8 @@ RUN pip install --no-cache-dir uv
 
 # Install dependencies first (layer cache)
 COPY pyproject.toml .
-RUN uv pip install --system --no-cache $(python -c "
-import tomllib
-with open('pyproject.toml', 'rb') as f:
-    data = tomllib.load(f)
-print(' '.join(data['project']['dependencies']))
-")
+RUN python -c "import tomllib; f=open('pyproject.toml','rb'); d=tomllib.load(f); print('\n'.join(d['project']['dependencies']))" > requirements.txt && \
+    uv pip install --system --no-cache -r requirements.txt
 
 # Copy source
 COPY . .
