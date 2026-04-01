@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
     # HTTP timeouts
     provider_timeout: float = 60.0
-    api_timeout: float = 30.0
+    api_timeout: float = 300.0
 
 
 settings = Settings()
