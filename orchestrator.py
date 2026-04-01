@@ -129,21 +129,29 @@ class ParserOrchestrator:
             log.warning("No valid plan payloads built despite changes")
             return
 
-        # 5. Sync with cloudsell API
-        try:
-            result = await api.sync_plans(
-                provider_id=provider_id,
-                active_external_ids=active_external_ids,
-                plans=plan_payloads,
-            )
-            log.info(
-                "Sync complete",
-                created=result.get("created", 0),
-                deactivated=result.get("deactivated", 0),
-            )
-        except CloudsellApiError as exc:
-            log.error("Failed to sync plans with API", error=str(exc))
-            return
+        # 5. Sync with cloudsell API in batches to avoid timeouts on large providers
+        _BATCH_SIZE = 50
+        total_created = 0
+        total_deactivated = 0
+
+        for batch_start in range(0, len(plan_payloads), _BATCH_SIZE):
+            batch = plan_payloads[batch_start : batch_start + _BATCH_SIZE]
+            batch_num = batch_start // _BATCH_SIZE + 1
+            total_batches = (len(plan_payloads) + _BATCH_SIZE - 1) // _BATCH_SIZE
+            log.info("Syncing batch", batch=f"{batch_num}/{total_batches}", size=len(batch))
+            try:
+                result = await api.sync_plans(
+                    provider_id=provider_id,
+                    active_external_ids=active_external_ids,
+                    plans=batch,
+                )
+                total_created += result.get("created", 0)
+                total_deactivated += result.get("deactivated", 0)
+            except CloudsellApiError as exc:
+                log.error("Failed to sync batch", batch=f"{batch_num}/{total_batches}", error=str(exc))
+                return
+
+        log.info("Sync complete", created=total_created, deactivated=total_deactivated)
 
         # 6. Save snapshots only for plans that were successfully built and synced
         for plan in successfully_built:

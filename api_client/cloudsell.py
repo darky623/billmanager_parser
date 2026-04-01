@@ -30,7 +30,7 @@ class CloudsellClient:
     async def __aenter__(self) -> "CloudsellClient":
         self._client = httpx.AsyncClient(
             headers=self._headers,
-            timeout=httpx.Timeout(connect=10.0, read=self._timeout, write=self._timeout, pool=10.0),
+            timeout=httpx.Timeout(connect=30.0, read=self._timeout, write=self._timeout, pool=30.0),
         )
         return self
 
