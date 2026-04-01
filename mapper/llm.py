@@ -18,7 +18,7 @@ from decimal import Decimal
 import structlog
 from bs4 import BeautifulSoup
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 log = structlog.get_logger(__name__)
 
@@ -43,6 +43,11 @@ class ServerFeatures(BaseModel):
     disk_type: str = Field(default="SSD")
     network_speed: Decimal = Field(default=Decimal("0"), description="Mbps")
     network_limit: Decimal = Field(default=Decimal("0"), description="TB")
+
+    @field_validator("network_speed", "network_limit", mode="before")
+    @classmethod
+    def _coerce_none_to_zero(cls, v: object) -> object:
+        return v if v is not None else Decimal("0")
 
 
 _SYSTEM_PROMPT = """\
