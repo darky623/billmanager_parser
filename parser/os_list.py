@@ -43,7 +43,8 @@ def parse_os_list(raw_bytes: bytes, plan_id: int) -> list[ParsedOS]:
             log.debug("Skipping OS entry: missing key or name", plan_id=plan_id, entry=raw_entry)
             continue
 
-        family = entry.value_group.strip() or _detect_family(entry.display_name)
+        raw_group = entry.value_group.strip()
+        family = raw_group if raw_group and raw_group != _FALLBACK_FAMILY else _detect_family(entry.display_name)
 
         os_list.append(ParsedOS(
             external_id=entry.key,
@@ -59,10 +60,23 @@ def _detect_family(name: str) -> str:
     """Guess OS family from display name when $valuegroup is absent."""
     name_lower = name.lower()
     families = [
-        "ubuntu", "debian", "centos", "almalinux", "rockylinux", "fedora",
-        "opensuse", "archlinux", "gentoo", "windows", "freebsd",
+        ("ubuntu", "Ubuntu"),
+        ("debian", "Debian"),
+        ("almalinux", "AlmaLinux"),
+        ("rockylinux", "Rocky Linux"),
+        ("rocky", "Rocky Linux"),
+        ("centos", "CentOS"),
+        ("fedora", "Fedora"),
+        ("opensuse", "openSUSE"),
+        ("archlinux", "Arch Linux"),
+        ("gentoo", "Gentoo"),
+        ("windows", "Windows"),
+        ("freebsd", "FreeBSD"),
+        ("oracle", "Oracle Linux"),
+        ("astra", "Astra Linux"),
+        ("altlinux", "ALT Linux"),
     ]
-    for family in families:
-        if family in name_lower:
-            return family.capitalize()
+    for keyword, label in families:
+        if keyword in name_lower:
+            return label
     return _FALLBACK_FAMILY
