@@ -20,7 +20,7 @@ from mapper.prices import map_prices
 from parser.client import BillManagerClient
 from parser.models import ParsedPlan
 from parser.os_list import parse_os_list
-from parser.plans import parse_pricelist
+from parser.plans import parse_datacenter_ids, parse_pricelist
 from snapshot.store import SnapshotStore, plan_to_snapshot_dict
 
 log = structlog.get_logger(__name__)
@@ -63,15 +63,27 @@ class ParserOrchestrator:
         provider_id: str,
         creds: ProviderCredentials,
     ) -> None:
-        # 1. Fetch pricelist
+        # 1. Fetch pricelist for each datacenter
         try:
-            raw_pricelist = await bm.fetch_pricelist()
+            raw_default = await bm.fetch_pricelist()
+            datacenter_ids = parse_datacenter_ids(raw_default)
+            if not datacenter_ids:
+                datacenter_ids = [None]  # type: ignore[list-item]
+            log.info("Datacenters found", count=len(datacenter_ids), ids=datacenter_ids)
         except Exception as exc:
             log.error("Failed to fetch pricelist", error=str(exc))
             return
 
-        # 2. Parse pricelist
-        plans = parse_pricelist(raw_pricelist)
+        # 2. Parse plans across all datacenters
+        plans: list[ParsedPlan] = []
+        for dc_id in datacenter_ids:
+            try:
+                raw = await bm.fetch_pricelist(datacenter_id=dc_id)
+                dc_plans = parse_pricelist(raw)
+                plans.extend(dc_plans)
+            except Exception as exc:
+                log.error("Failed to fetch pricelist for datacenter", datacenter_id=dc_id, error=str(exc))
+
         if not plans:
             log.warning("No plans parsed from pricelist")
             return

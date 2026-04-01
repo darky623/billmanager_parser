@@ -40,15 +40,17 @@ class BillManagerClient:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def fetch_pricelist(self) -> bytes:
-        """GET pricelist — all VDS plans with datacenters and prices."""
+    async def fetch_pricelist(self, datacenter_id: int | None = None) -> bytes:
+        """GET pricelist — all VDS plans for a given datacenter (or default if None)."""
         url = f"{self._base_url}/billmgr"
-        params = {
+        params: dict = {
             "func": _PRICELIST_FUNC,
             "out": "xjson",
             "sfrom": "ajax",
             "authinfo": self._authinfo,
         }
+        if datacenter_id is not None:
+            params["datacenter"] = str(datacenter_id)
         log.debug("Fetching pricelist", url=url)
         response = await self._get(url, params)
         return response.content

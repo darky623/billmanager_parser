@@ -10,6 +10,30 @@ log = structlog.get_logger(__name__)
 
 _FALLBACK_FAMILY = "Other"
 
+# Normalize short/variant valuegroup values from BILLmanager to canonical family names
+_FAMILY_NORMALIZE: dict[str, str] = {
+    "alma": "AlmaLinux",
+    "almalinux": "AlmaLinux",
+    "ubuntu": "Ubuntu",
+    "debian": "Debian",
+    "centos": "CentOS",
+    "rocky": "Rocky Linux",
+    "rockylinux": "Rocky Linux",
+    "fedora": "Fedora",
+    "opensuse": "openSUSE",
+    "windows": "Windows",
+    "freebsd": "FreeBSD",
+    "oracle": "Oracle Linux",
+    "astra": "Astra Linux",
+    "altlinux": "ALT Linux",
+    "archlinux": "Arch Linux",
+    "gentoo": "Gentoo",
+}
+
+
+def _normalize_family(raw: str) -> str:
+    return _FAMILY_NORMALIZE.get(raw.lower().replace(" ", "").replace("-", ""), raw)
+
 
 def parse_os_list(raw_bytes: bytes, plan_id: int) -> list[ParsedOS]:
     """Parse BILLmanager v2.vds.order.param response and extract OS entries."""
@@ -44,7 +68,10 @@ def parse_os_list(raw_bytes: bytes, plan_id: int) -> list[ParsedOS]:
             continue
 
         raw_group = entry.value_group.strip()
-        family = raw_group if raw_group and raw_group != _FALLBACK_FAMILY else _detect_family(entry.display_name)
+        if raw_group and raw_group != _FALLBACK_FAMILY:
+            family = _normalize_family(raw_group)
+        else:
+            family = _detect_family(entry.display_name)
 
         os_list.append(ParsedOS(
             external_id=entry.key,

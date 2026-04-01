@@ -24,6 +24,22 @@ _CURRENCY_MAP = {
 }
 
 
+def parse_datacenter_ids(raw_bytes: bytes) -> list[int]:
+    """Extract all datacenter IDs from pricelist slist."""
+    data = json.loads(raw_bytes)
+    slists = data.get("doc", {}).get("slist", [])
+    dc_node = next((x for x in slists if isinstance(x, dict) and x.get("$name") == "datacenter"), None)
+    if not dc_node:
+        return []
+    ids = []
+    for val in dc_node.get("val", []):
+        try:
+            ids.append(int(val["$key"]))
+        except (KeyError, ValueError):
+            continue
+    return ids
+
+
 def parse_pricelist(raw_bytes: bytes) -> list[ParsedPlan]:
     """Parse raw BILLmanager pricelist JSON into a list of ParsedPlan."""
     data = json.loads(raw_bytes)
