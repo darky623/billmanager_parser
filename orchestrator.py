@@ -192,7 +192,6 @@ class ParserOrchestrator:
                 "family": os_entry.family,
                 "name": os_entry.display_name,
                 "external_id": os_entry.external_id,
-                "version": os_entry.version,
             }
             for os_entry in os_list
         ]
