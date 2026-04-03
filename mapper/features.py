@@ -6,7 +6,7 @@ Strategy:
 """
 
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 import structlog
 from openai import OpenAI
@@ -85,8 +85,10 @@ def _try_fast_parse(plan: ParsedPlan) -> ServerFeatures | None:
     ram_type = _detect_ram_type(plan.description_raw)
     network_speed = _parse_network_speed(d.get(_DETAIL_NETWORK, "") + " " + plan.description_raw)
 
+    processor_name = _parse_processor_name(plan.description_raw)
+
     return ServerFeatures(
-        processor_name=None,
+        processor_name=processor_name,
         cores=cores,
         core_frequency=None,
         ram=ram_gb,
@@ -126,7 +128,7 @@ def _parse_size_to_gb(text: str) -> Decimal | None:
         return None
 
     if any(k in text_lower for k in ("мб", "mb", "мегаб")):
-        return (value / _MB_IN_GB).quantize(Decimal("0.001"))
+        return _round_to_standard_gb((value / _MB_IN_GB).quantize(Decimal("0.001")))
     if any(k in text_lower for k in ("тб", "tb", "терабайт")):
         return value * _GB_IN_TB
     if any(k in text_lower for k in ("гб", "gb", "гигаб")):
@@ -135,7 +137,29 @@ def _parse_size_to_gb(text: str) -> Decimal | None:
     # No unit — assume MB if small number, GB otherwise
     if value < 128:
         return value  # likely already GB
-    return (value / _MB_IN_GB).quantize(Decimal("0.001"))
+    return _round_to_standard_gb((value / _MB_IN_GB).quantize(Decimal("0.001")))
+
+
+def _round_to_standard_gb(value: Decimal) -> Decimal:
+    """Round to nearest integer GB if within 5% tolerance (handles decimal vs binary GB)."""
+    rounded = value.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    if rounded > 0 and abs(value - rounded) / rounded < Decimal("0.05"):
+        return rounded
+    return value
+
+
+def _parse_processor_name(text: str) -> str | None:
+    """Extract CPU model from description text."""
+    if not text:
+        return None
+    clean = re.sub(r'<[^>]+>', ' ', text)
+    m = re.search(
+        r'(Intel\s+(?:Xeon|Core\s+i\d|Pentium|Celeron)[^\s,<]{0,30}|'
+        r'AMD\s+(?:EPYC|Ryzen|Opteron)[^\s,<]{0,30})',
+        clean,
+        re.IGNORECASE,
+    )
+    return m.group(1).strip() if m else None
 
 
 def _detect_disk_type(text: str) -> str | None:
@@ -159,11 +183,21 @@ def _parse_network_speed(text: str) -> Decimal | None:
     if not text:
         return None
 
-    gbps_match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:gbps|гбит)", text, re.IGNORECASE)
+    clean = re.sub(r'<[^>]+>', ' ', text)
+
+    gbps_match = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*(?:gbps|гбит(?:/с|/s)?)",
+        clean,
+        re.IGNORECASE,
+    )
     if gbps_match:
         return Decimal(gbps_match.group(1).replace(",", ".")) * 1000
 
-    mbps_match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:mb/?s|мбит|мб/с|mbps)", text, re.IGNORECASE)
+    mbps_match = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*(?:mb/?s|мбит(?:/с|/s)?|мб/с|mbps)",
+        clean,
+        re.IGNORECASE,
+    )
     if mbps_match:
         return Decimal(mbps_match.group(1).replace(",", "."))
 
