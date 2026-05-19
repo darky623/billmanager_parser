@@ -21,9 +21,10 @@ log = structlog.get_logger(__name__)
 _DETAIL_CORES = "Количество процессоров"
 _DETAIL_RAM = "Оперативная память"
 _DETAIL_DISK = "Дисковое пространство"
-_DETAIL_NETWORK_SPEED = "Скорость порта"   # actual port speed (Мбит/с, Гбит/с)
-_DETAIL_NETWORK_SPEED_ALT = "Канал"         # alternative field name used by some providers
-_DETAIL_NETWORK_LIMIT = "Входящий трафик"   # traffic limit in GB/TB, not speed
+_DETAIL_NETWORK_SPEED = "Скорость порта"    # actual port speed (Мбит/с, Гбит/с)
+_DETAIL_NETWORK_SPEED_ALT = "Канал"          # alternative: some providers
+_DETAIL_NETWORK_SPEED_WIDTH = "Ширина канала"  # YaColo: "100 Mбит/сек"
+_DETAIL_NETWORK_LIMIT = "Входящий трафик"    # traffic limit in GB/TB, not speed
 
 _MB_IN_GB = Decimal("1024")
 _GB_IN_TB = Decimal("1024")
@@ -90,6 +91,7 @@ def _try_fast_parse(plan: ParsedPlan) -> ServerFeatures | None:
     speed_text = " ".join(filter(None, [
         d.get(_DETAIL_NETWORK_SPEED, ""),
         d.get(_DETAIL_NETWORK_SPEED_ALT, ""),
+        d.get(_DETAIL_NETWORK_SPEED_WIDTH, ""),
         plan.description_raw,
     ]))
     network_speed = _parse_network_speed(speed_text)
@@ -210,8 +212,9 @@ def _parse_network_speed(text: str) -> Decimal | None:
         return Decimal(gbps_match.group(1).replace(",", ".")) * 1000
 
     # Mbps patterns — with and without /с or /s suffix
+    # Handles mixed Latin/Cyrillic like YaColo "100 Mбит/сек" (Latin M + Cyrillic бит)
     mbps_match = re.search(
-        r"(\d+(?:[.,]\d+)?)\s*(?:mb/?s|мбит(?:/с(?:\.|)?|/s)?|мб/с|mbps)",
+        r"(\d+(?:[.,]\d+)?)\s*(?:mb/?s|mbps|[МмMm]бит(?:/с(?:ек)?|/s)?|мб/с)",
         clean,
         re.IGNORECASE,
     )
