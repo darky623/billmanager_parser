@@ -21,7 +21,9 @@ log = structlog.get_logger(__name__)
 _DETAIL_CORES = "Количество процессоров"
 _DETAIL_RAM = "Оперативная память"
 _DETAIL_DISK = "Дисковое пространство"
-_DETAIL_NETWORK = "Входящий трафик"
+_DETAIL_NETWORK_SPEED = "Скорость порта"   # actual port speed (Мбит/с, Гбит/с)
+_DETAIL_NETWORK_SPEED_ALT = "Канал"         # alternative field name used by some providers
+_DETAIL_NETWORK_LIMIT = "Входящий трафик"   # traffic limit in GB/TB, not speed
 
 _MB_IN_GB = Decimal("1024")
 _GB_IN_TB = Decimal("1024")
@@ -83,7 +85,14 @@ def _try_fast_parse(plan: ParsedPlan) -> ServerFeatures | None:
 
     disk_type = _detect_disk_type(d.get(_DETAIL_DISK, "") + " " + plan.description_raw)
     ram_type = _detect_ram_type(plan.description_raw)
-    network_speed = _parse_network_speed(d.get(_DETAIL_NETWORK, "") + " " + plan.description_raw)
+
+    # Collect speed hints: dedicated speed fields first, then description
+    speed_text = " ".join(filter(None, [
+        d.get(_DETAIL_NETWORK_SPEED, ""),
+        d.get(_DETAIL_NETWORK_SPEED_ALT, ""),
+        plan.description_raw,
+    ]))
+    network_speed = _parse_network_speed(speed_text)
 
     processor_name = _parse_processor_name(plan.description_raw)
 
@@ -179,26 +188,50 @@ def _detect_ram_type(text: str) -> str | None:
 
 
 def _parse_network_speed(text: str) -> Decimal | None:
-    """Parse network speed to Mbps. '200Mb/s' → 200, '1 Gbps' → 1000."""
+    """Parse network speed to Mbps.
+
+    Examples:
+      '200Mb/s' → 200, '1 Gbps' → 1000, '1 Гбит' → 1000,
+      '100 Мбит' → 100, '1G' → 1000, '10G port' → 10000,
+      'канал 1 Гбит' → 1000
+    """
     if not text:
         return None
 
     clean = re.sub(r'<[^>]+>', ' ', text)
 
+    # Gbps patterns — with and without /с or /s suffix
     gbps_match = re.search(
-        r"(\d+(?:[.,]\d+)?)\s*(?:gbps|гбит(?:/с|/s)?)",
+        r"(\d+(?:[.,]\d+)?)\s*(?:gbps|гбит(?:/с(?:\.|)?|/s)?)",
         clean,
         re.IGNORECASE,
     )
     if gbps_match:
         return Decimal(gbps_match.group(1).replace(",", ".")) * 1000
 
+    # Mbps patterns — with and without /с or /s suffix
     mbps_match = re.search(
-        r"(\d+(?:[.,]\d+)?)\s*(?:mb/?s|мбит(?:/с|/s)?|мб/с|mbps)",
+        r"(\d+(?:[.,]\d+)?)\s*(?:mb/?s|мбит(?:/с(?:\.|)?|/s)?|мб/с|mbps)",
         clean,
         re.IGNORECASE,
     )
     if mbps_match:
         return Decimal(mbps_match.group(1).replace(",", "."))
+
+    # Short G/Gbit suffix — e.g. '1G', '10G port', '1 Gbit'
+    g_match = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*(?:gbit\b|[Gg]бит\b|[Gg]\b)",
+        clean,
+    )
+    if g_match:
+        return Decimal(g_match.group(1).replace(",", ".")) * 1000
+
+    # Short M/Mbit suffix — e.g. '100M', '100 Mbit'
+    m_match = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*(?:mbit\b|[Мм]бит\b|[Mm]\b)",
+        clean,
+    )
+    if m_match:
+        return Decimal(m_match.group(1).replace(",", "."))
 
     return None

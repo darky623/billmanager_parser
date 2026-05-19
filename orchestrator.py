@@ -99,7 +99,7 @@ class ParserOrchestrator:
                 prices=[{"period": p.period, "cost": str(p.cost), "currency": p.currency} for p in plan.prices],
                 detail=plan.detail,
             )
-            if self._snapshot.has_changed(creds.base_url, plan.external_id, snap_dict):
+            if settings.force_full_sync or self._snapshot.has_changed(creds.base_url, plan.external_id, snap_dict):
                 changed_plans.append(plan)
 
         log.info(
@@ -133,28 +133,31 @@ class ParserOrchestrator:
         _BATCH_SIZE = 50
         total_created = 0
         total_deactivated = 0
+        synced_plans: list[ParsedPlan] = []
 
         for batch_start in range(0, len(plan_payloads), _BATCH_SIZE):
-            batch = plan_payloads[batch_start : batch_start + _BATCH_SIZE]
+            batch_payloads = plan_payloads[batch_start : batch_start + _BATCH_SIZE]
+            batch_plans = successfully_built[batch_start : batch_start + _BATCH_SIZE]
             batch_num = batch_start // _BATCH_SIZE + 1
             total_batches = (len(plan_payloads) + _BATCH_SIZE - 1) // _BATCH_SIZE
-            log.info("Syncing batch", batch=f"{batch_num}/{total_batches}", size=len(batch))
+            log.info("Syncing batch", batch=f"{batch_num}/{total_batches}", size=len(batch_payloads))
             try:
                 result = await api.sync_plans(
                     provider_id=provider_id,
                     active_external_ids=active_external_ids,
-                    plans=batch,
+                    plans=batch_payloads,
                 )
                 total_created += result.get("created", 0)
                 total_deactivated += result.get("deactivated", 0)
+                synced_plans.extend(batch_plans)
             except CloudsellApiError as exc:
                 log.error("Failed to sync batch", batch=f"{batch_num}/{total_batches}", error=str(exc))
-                return
+                continue
 
         log.info("Sync complete", created=total_created, deactivated=total_deactivated)
 
-        # 6. Save snapshots only for plans that were successfully built and synced
-        for plan in successfully_built:
+        # 6. Save snapshots only for plans from successfully synced batches
+        for plan in synced_plans:
             snap_dict = plan_to_snapshot_dict(
                 plan_id=plan.external_id,
                 prices=[{"period": p.period, "cost": str(p.cost), "currency": p.currency} for p in plan.prices],
@@ -162,7 +165,7 @@ class ParserOrchestrator:
             )
             self._snapshot.save(creds.base_url, plan.external_id, snap_dict)
 
-        log.info("Snapshots updated", count=len(successfully_built))
+        log.info("Snapshots updated", count=len(synced_plans))
 
     async def _build_plan_payload(
         self,
@@ -203,8 +206,8 @@ class ParserOrchestrator:
             return None
 
         if not os_list:
-            log.warning("No OS entries for plan, skipping")
-            return None
+            # Some plan types (e.g. dedicated) may have no OS list — continue without OS
+            log.warning("No OS entries for plan, continuing without OS definitions")
 
         # 4b. Build OS definitions (API handles upsert internally)
         os_definitions = [
@@ -213,7 +216,7 @@ class ParserOrchestrator:
                 "name": os_entry.display_name,
                 "external_id": os_entry.external_id,
             }
-            for os_entry in os_list
+            for os_entry in (os_list or [])
         ]
 
         # 4c. Map prices

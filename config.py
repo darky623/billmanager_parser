@@ -39,6 +39,9 @@ class Settings(BaseSettings):
             return [v[k] for k in sorted(v.keys(), key=int)]
         return v
 
+    # Force full re-sync of all plans regardless of snapshot state
+    force_full_sync: bool = False
+
     # Scheduler
     parse_cron: str = "0 2 * * *"  # daily at 02:00
 

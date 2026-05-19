@@ -28,7 +28,9 @@ _GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 _DETAIL_CORES = "Количество процессоров"
 _DETAIL_RAM = "Оперативная память"
 _DETAIL_DISK = "Дисковое пространство"
-_DETAIL_NETWORK = "Входящий трафик"
+_DETAIL_NETWORK_SPEED = "Скорость порта"   # port speed — this is what we want for network_speed
+_DETAIL_NETWORK_SPEED_ALT = "Канал"         # alternative speed field name
+_DETAIL_NETWORK_LIMIT = "Входящий трафик"   # traffic limit in GB/TB — NOT port speed
 
 
 class ServerFeatures(BaseModel):
@@ -73,7 +75,7 @@ Rules:
 - RAM: look for numbers near "RAM", "МБ", "GB", "DDR", "память"
 - Disk: look for numbers near "GB", "ТБ", "SSD", "NVMe", "HDD", "диск"
 - Cores: look for "ядр", "core", "vCPU", "CPU", "процессор"
-- Network speed: look for "Mb/s", "Gbps", "канал", "скорость"
+- Network speed: look for port speed fields like 'Скорость порта', 'Канал', 'Порт', 'Mb/s', 'Gbps', 'Гбит', 'Мбит'; do NOT use traffic limit field 'Входящий трафик' — that is volume in GB/TB, not speed
 - If a field is truly unknown: null for strings, 0 for network fields, 1 for cores
 - Do NOT confuse disk capacity with RAM
 """
@@ -97,7 +99,9 @@ def _build_user_prompt(title: str, description: str, detail: dict[str, str]) -> 
     cores_hint = detail.get(_DETAIL_CORES, "")
     ram_hint = detail.get(_DETAIL_RAM, "")
     disk_hint = detail.get(_DETAIL_DISK, "")
-    network_hint = detail.get(_DETAIL_NETWORK, "")
+    # Speed fields: look in dedicated speed fields, NOT in traffic limit
+    network_speed_hint = detail.get(_DETAIL_NETWORK_SPEED, "") or detail.get(_DETAIL_NETWORK_SPEED_ALT, "")
+    network_limit_hint = detail.get(_DETAIL_NETWORK_LIMIT, "")
 
     return (
         f'Extract server hardware from the following data:\n\n'
@@ -107,7 +111,8 @@ def _build_user_prompt(title: str, description: str, detail: dict[str, str]) -> 
         f'- Cores/CPU: "{cores_hint}"\n'
         f'- RAM: "{ram_hint}"\n'
         f'- Disk: "{disk_hint}"\n'
-        f'- Network: "{network_hint}"\n'
+        f'- Network speed (port speed, Мбит/Гбит): "{network_speed_hint}"\n'
+        f'- Network limit (traffic volume, NOT speed): "{network_limit_hint}"\n'
     )
 
 
