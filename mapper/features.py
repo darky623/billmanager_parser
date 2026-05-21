@@ -97,6 +97,7 @@ def _try_fast_parse(plan: ParsedPlan) -> ServerFeatures | None:
     network_speed = _parse_network_speed(speed_text)
 
     processor_name = _parse_processor_name(plan.description_raw)
+    network_limit = _parse_network_limit(d.get(_DETAIL_NETWORK_LIMIT, ""))
 
     return ServerFeatures(
         processor_name=processor_name,
@@ -107,7 +108,7 @@ def _try_fast_parse(plan: ParsedPlan) -> ServerFeatures | None:
         disk=disk_gb,
         disk_type=disk_type or "SSD",
         network_speed=network_speed or Decimal("0"),
-        network_limit=Decimal("0"),
+        network_limit=network_limit,
     )
 
 
@@ -138,11 +139,11 @@ def _parse_size_to_gb(text: str) -> Decimal | None:
     except InvalidOperation:
         return None
 
-    if any(k in text_lower for k in ("мб", "mb", "мегаб")):
+    if any(k in text_lower for k in ("миб", "мб", "mb", "мегаб", "mib")):
         return _round_to_standard_gb((value / _MB_IN_GB).quantize(Decimal("0.001")))
-    if any(k in text_lower for k in ("тб", "tb", "терабайт")):
+    if any(k in text_lower for k in ("тиб", "тб", "tb", "терабайт", "tib")):
         return value * _GB_IN_TB
-    if any(k in text_lower for k in ("гб", "gb", "гигаб")):
+    if any(k in text_lower for k in ("гиб", "гб", "gb", "гигаб", "gib")):
         return value
 
     # No unit — assume MB if small number, GB otherwise
@@ -238,3 +239,35 @@ def _parse_network_speed(text: str) -> Decimal | None:
         return Decimal(m_match.group(1).replace(",", "."))
 
     return None
+
+
+def _parse_network_limit(text: str) -> Decimal:
+    """Parse traffic limit from detail field to TB.
+
+    Examples: 'безлимит' → 0, '100 ГБ' → 0.097, '1 ТБ' → 1, '10 TB' → 10
+    Returns 0 for unlimited or unparseable.
+    """
+    if not text:
+        return Decimal("0")
+    text_lower = text.lower()
+
+    unlimited_keywords = ("безлимит", "unlim", "unlimited", "∞", "не ограничен")
+    if any(k in text_lower for k in unlimited_keywords):
+        return Decimal("0")
+
+    m = re.search(r"(\d[\d\s]*(?:[.,]\d+)?)", text)
+    if not m:
+        return Decimal("0")
+
+    raw_num = m.group(1).replace(" ", "").replace(",", ".")
+    try:
+        value = Decimal(raw_num)
+    except InvalidOperation:
+        return Decimal("0")
+
+    if any(k in text_lower for k in ("тиб", "тб", "tb", "тера", "tib")):
+        return value
+    if any(k in text_lower for k in ("гиб", "гб", "gb", "гига", "gib")):
+        return (value / _GB_IN_TB).quantize(Decimal("0.001"))
+
+    return Decimal("0")
