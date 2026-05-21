@@ -11,6 +11,7 @@ class ProviderCredentials(BaseSettings):
     password: SecretStr
     factor: float = 1.3  # price multiplier: final_price = provider_price * factor
     name_prefix: str  # 2-letter prefix for plan names, e.g. "YC" for YaColo, "DC" for Datacheap
+    default_network_speed: float = 0.0  # Mbps fallback when provider doesn't publish port speed
 
 
 class Settings(BaseSettings):

@@ -120,7 +120,7 @@ class ParserOrchestrator:
         for plan in changed_plans:
             log.info("Processing changed plan", plan_id=plan.external_id, name=plan.name)
 
-            payload = await self._build_plan_payload(bm, api, provider_id, creds.base_url, plan, creds.factor, creds.name_prefix)
+            payload = await self._build_plan_payload(bm, api, provider_id, creds.base_url, plan, creds.factor, creds.name_prefix, creds.default_network_speed)
             if payload:
                 plan_payloads.append(payload)
                 successfully_built.append(plan)
@@ -176,10 +176,11 @@ class ParserOrchestrator:
         plan: ParsedPlan,
         factor: float,
         name_prefix: str,
+        default_network_speed: float = 0.0,
     ) -> dict | None:
         structlog.contextvars.bind_contextvars(plan_id=plan.external_id)
         try:
-            return await self._build_plan_payload_inner(bm, api, provider_id, provider_host, plan, factor, name_prefix)
+            return await self._build_plan_payload_inner(bm, api, provider_id, provider_host, plan, factor, name_prefix, default_network_speed)
         finally:
             structlog.contextvars.unbind_contextvars("plan_id")
 
@@ -192,6 +193,7 @@ class ParserOrchestrator:
         plan: ParsedPlan,
         factor: float,
         name_prefix: str,
+        default_network_speed: float = 0.0,
     ) -> dict | None:
         # 4a. Fetch OS list
         try:
@@ -230,6 +232,12 @@ class ParserOrchestrator:
         if not features:
             log.error("Failed to extract features for plan, skipping")
             return None
+
+        # Apply provider-level default speed when provider doesn't publish port speed
+        if features.network_speed == 0 and default_network_speed > 0:
+            from decimal import Decimal as _D
+            features = features.model_copy(update={"network_speed": _D(str(default_network_speed))})
+            log.debug("Applied default network speed", speed_mbps=default_network_speed)
 
         location_code, location_raw = get_location_fields(plan)
 
