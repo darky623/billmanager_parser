@@ -6,7 +6,6 @@ before making any API calls to cloudsell.
 
 import hashlib
 import json
-import os
 from pathlib import Path
 
 import structlog

@@ -1,3 +1,7 @@
 /.DS_Store
 /billmanager_api_doc.md
 /responce_examples
+.env
+__pycache__/
+*.pyc
+snapshots/

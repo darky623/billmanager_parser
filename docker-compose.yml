@@ -6,3 +6,9 @@ services:
       - .env
     volumes:
       - ./snapshots:/app/snapshots
+    networks:
+      - cloudsell-network
+
+networks:
+  cloudsell-network:
+    external: true

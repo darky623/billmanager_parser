@@ -9,8 +9,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 log = structlog.get_logger(__name__)
 
-_PRICELIST_FUNC = "v2.vds.order.pricelist"
-_OS_PARAM_FUNC = "v2.vds.order.param"
+_FUNCTION_PREFIX = {"virtual": "v2.vds", "dedicated": "v2.dedic", "auction": "v2.not-install"}
 
 
 class BillManagerClient:
@@ -40,11 +39,11 @@ class BillManagerClient:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def fetch_pricelist(self, datacenter_id: int | None = None) -> bytes:
-        """GET pricelist — all VDS plans for a given datacenter (or default if None)."""
+    async def fetch_pricelist(self, datacenter_id: int | None = None, server_type: str = "virtual") -> bytes:
+        """GET pricelist for a server type and datacenter."""
         url = f"{self._base_url}/billmgr"
         params: dict = {
-            "func": _PRICELIST_FUNC,
+            "func": f"{_FUNCTION_PREFIX[server_type]}.order.pricelist",
             "out": "xjson",
             "sfrom": "ajax",
             "authinfo": self._authinfo,
@@ -61,7 +60,9 @@ class BillManagerClient:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    async def fetch_os_list(self, plan_external_id: int, datacenter_id: int, period: int = 1) -> bytes:
+    async def fetch_os_list(
+        self, plan_external_id: int, datacenter_id: int, period: int = 1, server_type: str = "virtual"
+    ) -> bytes:
         """GET OS list for a specific plan/datacenter combination."""
         url = f"{self._base_url}/billmgr"
         keyvalue = f"{plan_external_id}_{datacenter_id}"
@@ -72,7 +73,7 @@ class BillManagerClient:
             "hide_fperiod": "off",
             "hide_flabel": "on",
             "keyvalue": keyvalue,
-            "func": _OS_PARAM_FUNC,
+            "func": f"{_FUNCTION_PREFIX[server_type]}.order.param",
             "sfrom": "ajax",
             "out": "xjson",
             "authinfo": self._authinfo,

@@ -14,7 +14,7 @@ parser/           — получает и парсит прайслист и с�
 snapshot/         — сравнивает SHA-256 от raw JSON, пропускает неизменившиеся планы
       │
       ▼
-mapper/           — маппит features (быстрый парсер → LLM-фолбэк), цены, локацию
+mapper/           — маппит features (детерминированный парсер), цены, локацию
       │
       ▼
 api_client/       — отправляет данные в cloudsell_api
@@ -32,8 +32,8 @@ cloudsell_api     POST /v1/pricing-plans/sync
 - `models.py` — Pydantic-модели для raw BILLmanager JSON: `ParsedPlan`, `ParsedOS`, `ParsedPrice`.
 
 ### `mapper/`
-- `features.py` — `map_features()`: сначала пробует быстрый детерминированный парсер (regex по полям detail). Если cores/ram/disk не найдены — вызывает LLM.
-- `llm.py` — `extract_features_with_llm()`: Gemini через OpenAI-совместимый эндпоинт Google (`https://generativelanguage.googleapis.com/v1beta/openai`). `temperature=0`, HTML очищается через BeautifulSoup. Возвращает `ServerFeatures`.
+- `features.py` — `map_features()`: детерминированный парсер по полям detail и описанию тарифа. Планы без cores/ram/disk пропускаются с предупреждением в логах.
+- `models.py` — модель `ServerFeatures` для передачи характеристик в CloudSell API.
 - `prices.py` — `map_prices()`: фильтрует периоды `{1,3,6,12}`, дедупликация, дропает нулевые цены.
 - `location.py` — `resolve_location()`: 1060+ ключей маппинга локаций (перенесено из `cloudsell_api/gateways/providers/mapings.py`). Сначала точное совпадение, затем поиск по подстроке.
 
@@ -55,6 +55,12 @@ cloudsell_api     POST /v1/pricing-plans/sync
 5. Отправить `POST /pricing-plans/sync` с полным списком активных external_id + payload изменившихся планов
 6. Сохранить снапшоты (только после успешного sync)
 
+Если один из ЦОД не отвечает, парсер обновляет прочитанные тарифы, но не деактивирует отсутствующие: полный список для этого запуска неизвестен. Деактивация выполняется только после успешного обхода всех ЦОД и пакетов для конкретного типа сервера. Для медленного провайдера можно задать `PROVIDERS__N__TIMEOUT` отдельно от общего `PROVIDER_TIMEOUT`.
+
+Типы задаются через `PROVIDERS__N__SERVER_TYPES` (через запятую). По умолчанию включён только `virtual`. Для SpaceCore допустимы `virtual,dedicated,auction`, для YaColo и DataCheap — `virtual,dedicated`. Парсер запрашивает `order.param` для каждого физического тарифа: берёт разовую плату из строки «Установка (разово)», выбранные по умолчанию опции и характеристики конфигурации аукциона. Если сводка стоимости отсутствует или конфигурация имеет дополнительную стоимость, тариф не публикуется. Для провайдера без выбора ОС (YaColo) используется служебная ОС «ОС провайдера» с пустым внешним ID; Java gateway не передаёт `ostempl` при заказе. Конфигурируемые без фиксированного железа тарифы DataCheap пропускаются. Новые типы включайте по одному провайдеру после проверки заказа и продления.
+
+DataCheap показывает обязательное подтверждение условий оказания услуг (`licence_agreement`) в форме заказа. Пока покупатель не может подтвердить эти условия в CloudSell, автоматический заказ таких тарифов может быть отклонён провайдером; сервис не проставляет согласие за покупателя.
+
 ### `main.py`
 APScheduler `AsyncIOScheduler` с cron-триггером. При старте выполняет парсинг немедленно, затем по расписанию. Graceful shutdown по SIGTERM/SIGINT.
 
@@ -63,12 +69,8 @@ APScheduler `AsyncIOScheduler` с cron-триггером. При старте �
 Все настройки через `.env` (pydantic-settings):
 
 ```env
-# Gemini (OpenAI-compatible endpoint)
-GEMINI_API_KEY=AIza...
-GEMINI_MODEL=gemini-2.5-flash
-
 # Cloudsell API
-CLOUDSELL_API_URL=http://localhost:8000
+CLOUDSELL_API_URL=http://backend-api:8000
 CLOUDSELL_SERVICE_KEY=your-secret-service-key
 
 # Провайдеры (вложенные переменные)
@@ -78,7 +80,7 @@ PROVIDERS__0__USERNAME=your_user
 PROVIDERS__0__PASSWORD=your_password
 
 PROVIDERS__1__PROVIDER_ID=yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy
-PROVIDERS__1__BASE_URL=https://billing.datacheap.ru
+PROVIDERS__1__BASE_URL=https://vps.datacheap.ru
 PROVIDERS__1__USERNAME=your_user
 PROVIDERS__1__PASSWORD=your_password
 
@@ -90,7 +92,7 @@ SNAPSHOT_DIR=snapshots
 
 # Таймауты (секунды)
 PROVIDER_TIMEOUT=60.0
-API_TIMEOUT=30.0
+API_TIMEOUT=600.0
 ```
 
 `PROVIDER_ID` — UUID провайдера из БД `cloudsell_api`, берётся напрямую из конфига.
@@ -107,7 +109,7 @@ docker compose up -d
 docker compose logs -f
 ```
 
-Снапшоты сохраняются в `./snapshots/` (volume mount, переживают перезапуск контейнера).
+Снапшоты сохраняются в `./snapshots/` (volume mount, переживают перезапуск контейнера). Контейнер подключается к существующей Docker-сети `cloudsell-network`, где доступен `backend-api:8000`.
 
 ### Локально
 

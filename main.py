@@ -5,7 +5,6 @@ Runs the parser on startup and then on a cron schedule.
 
 import asyncio
 import signal
-import sys
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -34,7 +33,6 @@ async def main() -> None:
         providers=len(settings.providers),
         schedule=settings.parse_cron,
         api_url=settings.cloudsell_api_url,
-        llm_model=settings.gemini_model,
     )
 
     scheduler = AsyncIOScheduler()

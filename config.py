@@ -12,6 +12,16 @@ class ProviderCredentials(BaseSettings):
     factor: float = 1.3  # price multiplier: final_price = provider_price * factor
     name_prefix: str  # 2-letter prefix for plan names, e.g. "YC" for YaColo, "DC" for Datacheap
     default_network_speed: float = 0.0  # Mbps fallback when provider doesn't publish port speed
+    timeout: float | None = None  # optional provider-specific HTTP timeout
+    server_types: str = "virtual"  # comma-separated: virtual,dedicated,auction
+
+    @property
+    def enabled_server_types(self) -> tuple[str, ...]:
+        allowed = {"virtual", "dedicated", "auction"}
+        types = tuple(value.strip().lower() for value in self.server_types.split(",") if value.strip())
+        if not types or len(set(types)) != len(types) or any(value not in allowed for value in types):
+            raise ValueError(f"Invalid server types for {self.base_url}: {self.server_types}")
+        return types
 
 
 class Settings(BaseSettings):
@@ -20,10 +30,6 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         extra="ignore",
     )
-
-    # Gemini (via OpenAI-compatible endpoint, same as Java billmanager service)
-    gemini_api_key: SecretStr
-    gemini_model: str = "gemini-2.5-flash"
 
     # Cloudsell API
     cloudsell_api_url: str
@@ -51,7 +57,7 @@ class Settings(BaseSettings):
 
     # HTTP timeouts
     provider_timeout: float = 60.0
-    api_timeout: float = 300.0
+    api_timeout: float = 600.0
 
 
 settings = Settings()

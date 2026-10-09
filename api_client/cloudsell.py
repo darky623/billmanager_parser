@@ -47,6 +47,8 @@ class CloudsellClient:
         provider_id: str,
         active_external_ids: list[int],
         plans: list[dict],
+        server_type: str = "virtual",
+        finalize: bool = False,
     ) -> dict:
         """
         POST /v1/pricing-plans/sync
@@ -57,6 +59,8 @@ class CloudsellClient:
             "provider_id": provider_id,
             "active_external_ids": active_external_ids,
             "plans": plans,
+            "server_type": server_type,
+            "finalize": finalize,
         }
         response = await self._post("/api/v1/pricing-plans/sync", payload)
         if response.status_code != 200:

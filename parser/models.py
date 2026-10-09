@@ -5,6 +5,7 @@ No business logic — only parsing.
 """
 
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -44,6 +45,9 @@ class RawPriceEntry(BaseModel):
     cost: RawValue
     currency: RawValue
     period: RawValue
+    setup: Any = None
+    setup_cost: Any = None
+    installation: Any = None
 
     model_config = {"extra": "ignore"}
 
@@ -110,12 +114,14 @@ class ParsedPrice(BaseModel):
     period: int
     cost: Decimal
     currency: str
+    setup_cost: Decimal | None = None
 
 
 class ParsedPlan(BaseModel):
     """Cleaned plan data ready for diff and mapping."""
 
     external_id: int
+    server_type: str = "virtual"
     name: str
     description_raw: str
     detail: dict[str, str]
@@ -125,6 +131,8 @@ class ParsedPlan(BaseModel):
 
     # Raw JSON bytes for snapshot comparison
     raw_json: bytes = b""
+    raw_order_param: bytes = b""
+    default_addons: dict[str, str] = Field(default_factory=dict)
 
 
 class ParsedOS(BaseModel):

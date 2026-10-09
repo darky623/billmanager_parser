@@ -1,18 +1,16 @@
 """Map ParsedPlan → FeaturesPayload for cloudsell API.
 
-Strategy:
-1. Try to extract numeric values directly from 'detail' dict (fast path, no LLM cost)
-2. If any required field is missing → fall back to LLM extraction
+Extract numeric values directly from the BILLmanager detail fields.
 """
 
+import json
 import re
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import structlog
-from openai import OpenAI
 
-from mapper.llm import ServerFeatures, extract_features_with_llm
 from mapper.location import resolve_location
+from mapper.models import ServerFeatures
 from parser.models import ParsedPlan
 
 log = structlog.get_logger(__name__)
@@ -33,29 +31,15 @@ _DISK_TYPE_KEYWORDS = {"nvme": "NVME", "ssd": "SSD", "hdd": "HDD"}
 _RAM_TYPE_KEYWORDS = {"ddr5": "DDR5", "ddr4": "DDR4", "ddr3": "DDR3"}
 
 
-def map_features(
-    plan: ParsedPlan,
-    llm_client: OpenAI,
-    llm_model: str,
-) -> ServerFeatures | None:
-    """
-    Try deterministic parsing first.
-    If result is incomplete, fall back to LLM.
-    """
+def map_features(plan: ParsedPlan) -> ServerFeatures | None:
+    """Parse hardware fields without an external AI service."""
     fast = _try_fast_parse(plan)
     if fast is not None:
-        log.debug("Features: fast-parsed (no LLM)", plan_id=plan.external_id)
+        log.debug("Features parsed", plan_id=plan.external_id)
         return fast
 
-    log.debug("Features: fast-parse incomplete, calling LLM", plan_id=plan.external_id)
-    return extract_features_with_llm(
-        client=llm_client,
-        model=llm_model,
-        title=plan.name,
-        description_raw=plan.description_raw,
-        detail=plan.detail,
-        plan_id=plan.external_id,
-    )
+    log.warning("Required hardware fields missing; skipping plan", plan_id=plan.external_id)
+    return None
 
 
 def get_location_fields(plan: ParsedPlan) -> tuple[str | None, str | None]:
@@ -74,18 +58,39 @@ def _try_fast_parse(plan: ParsedPlan) -> ServerFeatures | None:
     Returns None if any required field is missing or unparseable.
     """
     d = plan.detail
+    description = re.sub(r"<[^>]+>", " ", plan.description_raw)
+    selected_configuration = _selected_configuration(plan.raw_order_param)
     try:
         cores = _parse_integer(d.get(_DETAIL_CORES, ""))
         ram_gb = _parse_size_to_gb(d.get(_DETAIL_RAM, ""))
         disk_gb = _parse_size_to_gb(d.get(_DETAIL_DISK, ""))
+        if plan.server_type != "virtual":
+            cores = _physical_cores(plan.name) or _physical_cores_detail(d.get("Процессор", "")) or cores
+            ram_gb = ram_gb or _physical_ram(plan.name) or _physical_ram(selected_configuration)
+            disk_gb = (
+                _physical_disk_detail(d) or _physical_disk(plan.name)
+                or _physical_disk(selected_configuration) or disk_gb
+            )
+        if cores is None:
+            cores = _parse_integer(_description_field(description, r"(?:Процессор|CPU|Cores?)", r"\d+"))
+        if ram_gb is None:
+            ram_gb = _parse_size_to_gb(
+                _description_field(description, r"(?:Память|RAM)", r"\d+(?:[.,]\d+)?\s*(?:[TGMТГМ][BbБб]?)")
+            )
+        if disk_gb is None:
+            disk_gb = _parse_size_to_gb(
+                _description_field(description, r"(?:Диск|Disk|SSD|HDD|NVMe)", r"\d+(?:[.,]\d+)?\s*(?:[TGMТГМ][BbБб]?)")
+            )
     except (ValueError, InvalidOperation):
         return None
 
     if cores is None or ram_gb is None or disk_gb is None:
         return None
 
-    disk_type = _detect_disk_type(d.get(_DETAIL_DISK, "") + " " + plan.description_raw)
-    ram_type = _detect_ram_type(plan.description_raw)
+    disk_type = _detect_disk_type(
+        d.get(_DETAIL_DISK, "") + " " + plan.description_raw + " " + plan.name + " " + selected_configuration
+    )
+    ram_type = _detect_ram_type(plan.description_raw + " " + plan.name)
 
     # Collect speed hints: dedicated speed fields first, then description
     speed_text = " ".join(filter(None, [
@@ -93,10 +98,13 @@ def _try_fast_parse(plan: ParsedPlan) -> ServerFeatures | None:
         d.get(_DETAIL_NETWORK_SPEED_ALT, ""),
         d.get(_DETAIL_NETWORK_SPEED_WIDTH, ""),
         plan.description_raw,
+        plan.name,
     ]))
     network_speed = _parse_network_speed(speed_text)
 
-    processor_name = _parse_processor_name(plan.description_raw)
+    processor_name = _parse_processor_name(plan.description_raw + " " + plan.name)
+    if processor_name is None and plan.server_type != "virtual":
+        processor_name = plan.name.split("/")[0].strip()[:50]
     network_limit = _parse_network_limit(d.get(_DETAIL_NETWORK_LIMIT, ""))
 
     return ServerFeatures(
@@ -110,6 +118,79 @@ def _try_fast_parse(plan: ParsedPlan) -> ServerFeatures | None:
         network_speed=network_speed or Decimal("0"),
         network_limit=network_limit,
     )
+
+
+def _physical_cores(name: str) -> int | None:
+    match = re.search(r"(\d+)\s*(?:ядер|ядра|cores?)\b", name, re.IGNORECASE)
+    if not match:
+        match = re.search(r"\b(\d+)c\s*/\s*\d+t\b", name, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _physical_cores_detail(processor: str) -> int | None:
+    match = re.search(r"(\d+)\s*cores?\b", processor, re.IGNORECASE)
+    if not match:
+        return None
+    count = int(match.group(1))
+    if count <= 16 and re.search(r"\b2\s*[xх×]", processor, re.IGNORECASE):
+        count *= 2
+    return count
+
+
+def _physical_ram(name: str) -> Decimal | None:
+    match = re.search(r"RAM\s*(\d+(?:[.,]\d+)?)\s*(?:ГБ|GB)", name, re.IGNORECASE)
+    if not match:
+        match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:ГБ|GB)\s*(?:DDR\d*|RAM)\b", name, re.IGNORECASE)
+    return Decimal(match.group(1).replace(",", ".")) if match else None
+
+
+def _physical_disk(name: str) -> Decimal | None:
+    values = []
+    for match in re.finditer(
+        r"(?:(\d+)\s*[xх×]\s*)?(\d+(?:[.,]\d+)?)\s*(ГБ|GB|ТБ|TB)\s*(?:[A-Z.]{0,12})?(?:NVMe|SSD|HDD)",
+        name, re.IGNORECASE,
+    ):
+        multiplier = int(match.group(1) or 1)
+        size = Decimal(match.group(2).replace(",", "."))
+        if match.group(3).lower() in ("тб", "tb"):
+            size *= 1024
+        values.append(size * multiplier)
+    return sum(values, Decimal("0")) or None
+
+
+def _physical_disk_detail(detail: dict[str, str]) -> Decimal | None:
+    sizes = []
+    for key, value in detail.items():
+        if not key.lower().startswith(("жесткий диск", "диск ")):
+            continue
+        match = re.search(r"(\d+(?:[.,]\d+)?)\s*(ГБ|GB|ТБ|TB)\b", value, re.IGNORECASE)
+        if match:
+            size = Decimal(match.group(1).replace(",", "."))
+            sizes.append(size * (1024 if match.group(2).lower() in ("тб", "tb") else 1))
+    return sum(sizes, Decimal("0")) or None
+
+
+def _selected_configuration(raw_order_param: bytes) -> str:
+    if not raw_order_param:
+        return ""
+    try:
+        doc = json.loads(raw_order_param)["doc"]
+    except (ValueError, KeyError):
+        return ""
+    selected = []
+    for item in doc.get("slist", []):
+        key = item.get("$name", "")
+        if not re.fullmatch(r"addon_\d+", key):
+            continue
+        value = doc.get(key, {}).get("$")
+        selected.extend(option.get("$", "") for option in item.get("val", []) if option.get("$key") == value)
+    return " ".join(selected)
+
+
+def _description_field(description: str, label: str, value: str) -> str:
+    """Extract a labelled hardware value from the provider's free-text description."""
+    match = re.search(rf"\b{label}\s*[:=-]?\s*({value})", description, re.IGNORECASE)
+    return match.group(1) if match else ""
 
 
 def _parse_integer(text: str) -> int | None:
