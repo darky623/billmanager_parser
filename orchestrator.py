@@ -54,6 +54,7 @@ class ParserOrchestrator:
                 username=creds.username,
                 password=creds.password.get_secret_value(),
                 timeout=creds.timeout or settings.provider_timeout,
+                proxy_url=creds.proxy_url,
             ) as bm:
                 for server_type in creds.enabled_server_types:
                     await self._process_provider(bm, api, creds.provider_id, creds, server_type)

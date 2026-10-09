@@ -13,6 +13,7 @@ class ProviderCredentials(BaseSettings):
     name_prefix: str  # 2-letter prefix for plan names, e.g. "YC" for YaColo, "DC" for Datacheap
     default_network_speed: float = 0.0  # Mbps fallback when provider doesn't publish port speed
     timeout: float | None = None  # optional provider-specific HTTP timeout
+    proxy_url: str | None = None  # optional provider-specific HTTP proxy
     server_types: str = "virtual"  # comma-separated: virtual,dedicated,auction
 
     @property

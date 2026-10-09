@@ -19,14 +19,16 @@ class BillManagerClient:
         username: str,
         password: str,
         timeout: float = 60.0,
+        proxy_url: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._authinfo = f"{username}:{password}"
         self._timeout = timeout
+        self._proxy_url = proxy_url
         self._client: AsyncClient | None = None
 
     async def __aenter__(self) -> "BillManagerClient":
-        self._client = AsyncClient(timeout=self._timeout)
+        self._client = AsyncClient(timeout=self._timeout, proxy=self._proxy_url)
         return self
 
     async def __aexit__(self, *_: object) -> None:
