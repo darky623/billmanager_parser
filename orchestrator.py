@@ -93,6 +93,15 @@ class ParserOrchestrator:
                 log.error("Failed to fetch pricelist for datacenter", datacenter_id=dc_id, error=str(exc))
                 failed_datacenters.append(dc_id)
 
+        # BILLmanager can list the same plan in several datacenters. The API
+        # identifies a plan by provider, server type and external_id.
+        unique_plans: dict[int, ParsedPlan] = {}
+        for plan in plans:
+            unique_plans.setdefault(plan.external_id, plan)
+        if len(unique_plans) != len(plans):
+            log.info("Duplicate plan IDs across datacenters", total=len(plans), unique=len(unique_plans))
+        plans = list(unique_plans.values())
+
         if failed_datacenters:
             log.warning("Datacenters unavailable; skipping deactivation", datacenter_ids=failed_datacenters)
 
